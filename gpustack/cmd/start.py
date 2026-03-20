@@ -368,6 +368,56 @@ def start_cmd_options(parser_server: argparse.ArgumentParser):
         default=get_gpustack_env_bool("OIDC_USE_USERINFO"),
     )
 
+    # OAuth2 settings (for non-OIDC OAuth 2.0 providers)
+    server_group.add_argument(
+        "--oauth2-authorize-url",
+        type=str,
+        help="OAuth 2.0 authorization endpoint URL.",
+        default=get_gpustack_env("OAUTH2_AUTHORIZE_URL"),
+    )
+    server_group.add_argument(
+        "--oauth2-token-url",
+        type=str,
+        help="OAuth 2.0 token endpoint URL.",
+        default=get_gpustack_env("OAUTH2_TOKEN_URL"),
+    )
+    server_group.add_argument(
+        "--oauth2-userinfo-url",
+        type=str,
+        help="OAuth 2.0 userinfo endpoint URL.",
+        default=get_gpustack_env("OAUTH2_USERINFO_URL"),
+    )
+    server_group.add_argument(
+        "--oauth2-client-id",
+        type=str,
+        help="OAuth 2.0 client ID.",
+        default=get_gpustack_env("OAUTH2_CLIENT_ID"),
+    )
+    server_group.add_argument(
+        "--oauth2-client-secret",
+        type=str,
+        help="OAuth 2.0 client secret.",
+        default=get_gpustack_env("OAUTH2_CLIENT_SECRET"),
+    )
+    server_group.add_argument(
+        "--oauth2-redirect-uri",
+        type=str,
+        help="OAuth 2.0 redirect URI. This must be set to `<server-url>/auth/oauth2/callback`.",
+        default=get_gpustack_env("OAUTH2_REDIRECT_URI"),
+    )
+    server_group.add_argument(
+        "--oauth2-scope",
+        type=str,
+        help="OAuth 2.0 scope. Default is 'userinfo'.",
+        default=get_gpustack_env("OAUTH2_SCOPE"),
+    )
+    server_group.add_argument(
+        "--oauth2-userinfo-username-key",
+        type=str,
+        help="Key in the OAuth 2.0 userinfo response to use as the username. If not set, falls back to --external-auth-name.",
+        default=get_gpustack_env("OAUTH2_USERINFO_USERNAME_KEY"),
+    )
+
     # SAML settings
     server_group.add_argument(
         "--saml-idp-server-url",
@@ -723,6 +773,14 @@ def set_server_options(args, config_data: dict):
         "external_auth_post_logout_redirect_key",
         "oidc_skip_userinfo",
         "oidc_use_userinfo",
+        "oauth2_authorize_url",
+        "oauth2_token_url",
+        "oauth2_userinfo_url",
+        "oauth2_client_id",
+        "oauth2_client_secret",
+        "oauth2_redirect_uri",
+        "oauth2_scope",
+        "oauth2_userinfo_username_key",
         "saml_idp_server_url",
         "saml_idp_logout_url",
         "saml_idp_entity_id",

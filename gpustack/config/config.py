@@ -170,6 +170,14 @@ class Config(WorkerConfig, BaseSettings):
         None  # Deprecated, use oidc_skip_userinfo instead
     )
     openid_configuration: Optional[dict] = None  # fetched openid configuration
+    oauth2_client_id: Optional[str] = None  # oauth2 client id
+    oauth2_client_secret: Optional[str] = None  # oauth2 client secret
+    oauth2_redirect_uri: Optional[str] = None  # oauth2 redirect uri
+    oauth2_authorize_url: Optional[str] = None  # oauth2 authorization endpoint
+    oauth2_token_url: Optional[str] = None  # oauth2 token endpoint
+    oauth2_userinfo_url: Optional[str] = None  # oauth2 userinfo endpoint
+    oauth2_scope: Optional[str] = "userinfo"  # oauth2 scope
+    oauth2_userinfo_username_key: Optional[str] = None  # key for username in userinfo response
     saml_sp_entity_id: Optional[str] = None  # saml sp_entity_id
     saml_sp_acs_url: Optional[str] = None  # saml sp_acs_url
     saml_sp_x509_cert: Optional[str] = ''  # saml sp_x509_cert
@@ -598,6 +606,8 @@ class Config(WorkerConfig, BaseSettings):
         if self.oidc_issuer:
             self.external_auth_type = AuthProviderEnum.OIDC
             self.openid_configuration = get_openid_configuration(self.oidc_issuer)
+        elif self.oauth2_authorize_url:
+            self.external_auth_type = AuthProviderEnum.OAuth2
         elif self.saml_idp_server_url:
             self.external_auth_type = AuthProviderEnum.SAML
 

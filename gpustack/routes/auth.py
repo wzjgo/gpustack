@@ -330,12 +330,164 @@ def get_saml_attributes(
     return None
 
 
+# OAuth2 login and callback endpoints (for non-OIDC OAuth 2.0 providers)
+
+
+@router.get("/oauth2/login")
+async def oauth2_login(request: Request):
+    config: Config = request.app.state.server_config
+    scope = config.oauth2_scope or "userinfo"
+    authUrl = (
+        f'{config.oauth2_authorize_url}?response_type=code&'
+        f'client_id={config.oauth2_client_id}&'
+        f'redirect_uri={config.oauth2_redirect_uri}&'
+        f'scope={scope}'
+    )
+    return RedirectResponse(url=authUrl)
+
+
+@router.get("/oauth2/callback")
+async def oauth2_callback(request: Request, session: SessionDep):
+    logger.debug("Invoke oauth2 callback.")
+    config: Config = request.app.state.server_config
+    query = dict(request.query_params)
+    code = query.get('code')
+    if not code:
+        raise BadRequestException(message="Missing authorization code")
+
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": config.oauth2_client_id,
+        "redirect_uri": config.oauth2_redirect_uri,
+    }
+    if config.oauth2_client_secret:
+        data["client_secret"] = config.oauth2_client_secret
+
+    use_proxy_env = use_proxy_env_for_url(config.oauth2_token_url)
+    async with httpx.AsyncClient(timeout=timeout, trust_env=use_proxy_env) as client:
+        try:
+            token_res = await client.post(config.oauth2_token_url, data=data)
+            res_data = token_res.json()
+            if token_res.status_code != 200:
+                error_desc = res_data.get(
+                    'error_description', res_data.get('msg', 'Unknown error')
+                )
+                raise BadRequestException(
+                    message=f"Failed to get token: {error_desc}"
+                )
+
+            access_token_value = res_data.get("access_token", "")
+            if not access_token_value:
+                raise UnauthorizedException(
+                    message="No access_token in token response"
+                )
+
+            # Fetch user info
+            headers = {'Authorization': f'Bearer {access_token_value}'}
+            userinfo_res = await client.get(
+                config.oauth2_userinfo_url, headers=headers
+            )
+            if userinfo_res.status_code != 200:
+                raise UnauthorizedException(
+                    message="Failed to fetch user info from userinfo endpoint"
+                )
+            user_data = userinfo_res.json()
+
+            # Extract username
+            username_key = (
+                config.oauth2_userinfo_username_key
+                or config.external_auth_name
+            )
+            if username_key:
+                username = user_data.get(username_key)
+            else:
+                for key in ["user_name", "username", "email", "phone"]:
+                    if user_data.get(key):
+                        username = user_data[key]
+                        break
+                else:
+                    raise UnauthorizedException(
+                        message="No valid username found in userinfo response"
+                    )
+
+            if not username:
+                raise UnauthorizedException(
+                    message=f"Username field '{username_key}' is empty in userinfo response"
+                )
+
+            # Extract full name
+            if (
+                config.external_auth_full_name
+                and '+' not in config.external_auth_full_name
+            ):
+                full_name = user_data.get(config.external_auth_full_name, "")
+            elif config.external_auth_full_name:
+                full_name = ' '.join(
+                    [
+                        str(user_data.get(v.strip(), ""))
+                        for v in config.external_auth_full_name.split('+')
+                    ]
+                )
+            else:
+                full_name = user_data.get("name", user_data.get("user_name", ""))
+
+            # Extract avatar
+            if config.external_auth_avatar_url:
+                avatar_url = user_data.get(config.external_auth_avatar_url)
+            else:
+                avatar_url = user_data.get("picture", None)
+
+        except (BadRequestException, UnauthorizedException):
+            raise
+        except Exception as e:
+            logger.error(f"OAuth2 callback error: {str(e)}")
+            raise UnauthorizedException(message=str(e))
+
+    # Find or create user
+    user = await User.first_by_field(session=session, field="username", value=username)
+    if not user:
+        user_info = User(
+            username=username,
+            full_name=full_name,
+            avatar_url=avatar_url,
+            hashed_password="",
+            is_admin=False,
+            is_active=not config.external_auth_default_inactive,
+            source=AuthProviderEnum.OAuth2,
+            require_password_change=False,
+        )
+        await User.create(session, user_info)
+
+    jwt_manager: JWTManager = request.app.state.jwt_manager
+    access_token = jwt_manager.create_jwt_token(username=username)
+    response = RedirectResponse(url='/')
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=access_token,
+        httponly=True,
+        max_age=envs.JWT_TOKEN_EXPIRE_MINUTES * 60,
+        expires=envs.JWT_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    response.set_cookie(
+        key=SSO_LOGIN_COOKIE_NAME,
+        value="true",
+        httponly=True,
+        max_age=envs.JWT_TOKEN_EXPIRE_MINUTES * 60,
+        expires=envs.JWT_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    return response
+
+
 # OIDC login and callback endpoints
 
 
 @router.get("/oidc/login")
 async def oidc_login(request: Request):
     config: Config = request.app.state.server_config
+    # If OAuth2 mode, redirect to OAuth2 login instead
+    if config.external_auth_type == AuthProviderEnum.OAuth2:
+        return RedirectResponse(url="/auth/oauth2/login")
     authorization_endpoint = config.openid_configuration["authorization_endpoint"]
     authUrl = (
         f'{authorization_endpoint}?response_type=code&'
@@ -555,9 +707,13 @@ async def get_auth_config(request: Request):
 
     auth_type = (config.external_auth_type or "Local").lower()
     if auth_type == "oidc":
-        req_dict = {"is_oidc": True, "is_saml": False}
+        req_dict = {"is_oidc": True, "is_saml": False, "is_oauth2": False}
     elif auth_type == "saml":
-        req_dict = {"is_oidc": False, "is_saml": True}
+        req_dict = {"is_oidc": False, "is_saml": True, "is_oauth2": False}
+    elif auth_type == "oauth2":
+        # Frontend only knows is_oidc/is_saml, so we signal is_oauth2
+        # and also set is_oidc=True for frontend compatibility (SSO button)
+        req_dict = {"is_oidc": True, "is_saml": False, "is_oauth2": True}
 
     initial_password_file = Path(config.data_dir) / "initial_admin_password"
     if initial_password_file.exists():

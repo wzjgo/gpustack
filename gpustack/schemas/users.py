@@ -41,6 +41,7 @@ class AuthProviderEnum(str, Enum):
     Local = "Local"
     OIDC = "OIDC"
     SAML = "SAML"
+    OAuth2 = "OAuth2"
 
 
 class UserBase(SQLModel):
