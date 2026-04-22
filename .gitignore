@@ -171,3 +171,5 @@ kubeconfig
 # avoid ignoring var in rootfs
 !/pack/rootfs/var
 !/pack/rootfs/var/**
+
+kpsdocs/

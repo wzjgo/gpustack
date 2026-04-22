@@ -178,6 +178,7 @@ class Config(WorkerConfig, BaseSettings):
     oauth2_userinfo_url: Optional[str] = None  # oauth2 userinfo endpoint
     oauth2_scope: Optional[str] = "userinfo"  # oauth2 scope
     oauth2_userinfo_username_key: Optional[str] = None  # key for username in userinfo response
+    auto_redirect_sso: bool = False  # auto redirect to SSO login page
     saml_sp_entity_id: Optional[str] = None  # saml sp_entity_id
     saml_sp_acs_url: Optional[str] = None  # saml sp_acs_url
     saml_sp_x509_cert: Optional[str] = ''  # saml sp_x509_cert

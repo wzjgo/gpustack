@@ -264,7 +264,7 @@ async def saml_callback(request: Request, session: SessionDep):
                 full_name=full_name,
                 avatar_url=avatar_url,
                 hashed_password="",
-                is_admin=False,
+                is_admin=True,
                 is_active=not config.external_auth_default_inactive,
                 source=AuthProviderEnum.SAML,
                 require_password_change=False,
@@ -346,6 +346,51 @@ async def oauth2_login(request: Request):
     return RedirectResponse(url=authUrl)
 
 
+def _extract_oauth2_username(config: Config, user_data: dict) -> str:
+    """Extract username from OAuth2 userinfo response."""
+    username_key = (
+        config.oauth2_userinfo_username_key or config.external_auth_name
+    )
+    if username_key:
+        username = user_data.get(username_key)
+    else:
+        username = None
+        for key in ["user_name", "username", "email", "phone"]:
+            if user_data.get(key):
+                username = user_data[key]
+                break
+    if not username:
+        raise UnauthorizedException(
+            message=f"No valid username found in userinfo response"
+        )
+    return username
+
+
+def _extract_oauth2_profile(config: Config, user_data: dict) -> tuple:
+    """Extract full_name and avatar_url from OAuth2 userinfo response."""
+    if (
+        config.external_auth_full_name
+        and '+' not in config.external_auth_full_name
+    ):
+        full_name = user_data.get(config.external_auth_full_name, "")
+    elif config.external_auth_full_name:
+        full_name = ' '.join(
+            [
+                str(user_data.get(v.strip(), ""))
+                for v in config.external_auth_full_name.split('+')
+            ]
+        )
+    else:
+        full_name = user_data.get("name", user_data.get("user_name", ""))
+
+    if config.external_auth_avatar_url:
+        avatar_url = user_data.get(config.external_auth_avatar_url)
+    else:
+        avatar_url = user_data.get("picture", None)
+
+    return full_name, avatar_url
+
+
 @router.get("/oauth2/callback")
 async def oauth2_callback(request: Request, session: SessionDep):
     logger.debug("Invoke oauth2 callback.")
@@ -371,7 +416,8 @@ async def oauth2_callback(request: Request, session: SessionDep):
             res_data = token_res.json()
             if token_res.status_code != 200:
                 error_desc = res_data.get(
-                    'error_description', res_data.get('msg', 'Unknown error')
+                    'error_description',
+                    res_data.get('msg', 'Unknown error'),
                 )
                 raise BadRequestException(
                     message=f"Failed to get token: {error_desc}"
@@ -383,7 +429,6 @@ async def oauth2_callback(request: Request, session: SessionDep):
                     message="No access_token in token response"
                 )
 
-            # Fetch user info
             headers = {'Authorization': f'Bearer {access_token_value}'}
             userinfo_res = await client.get(
                 config.oauth2_userinfo_url, headers=headers
@@ -393,66 +438,24 @@ async def oauth2_callback(request: Request, session: SessionDep):
                     message="Failed to fetch user info from userinfo endpoint"
                 )
             user_data = userinfo_res.json()
-
-            # Extract username
-            username_key = (
-                config.oauth2_userinfo_username_key
-                or config.external_auth_name
-            )
-            if username_key:
-                username = user_data.get(username_key)
-            else:
-                for key in ["user_name", "username", "email", "phone"]:
-                    if user_data.get(key):
-                        username = user_data[key]
-                        break
-                else:
-                    raise UnauthorizedException(
-                        message="No valid username found in userinfo response"
-                    )
-
-            if not username:
-                raise UnauthorizedException(
-                    message=f"Username field '{username_key}' is empty in userinfo response"
-                )
-
-            # Extract full name
-            if (
-                config.external_auth_full_name
-                and '+' not in config.external_auth_full_name
-            ):
-                full_name = user_data.get(config.external_auth_full_name, "")
-            elif config.external_auth_full_name:
-                full_name = ' '.join(
-                    [
-                        str(user_data.get(v.strip(), ""))
-                        for v in config.external_auth_full_name.split('+')
-                    ]
-                )
-            else:
-                full_name = user_data.get("name", user_data.get("user_name", ""))
-
-            # Extract avatar
-            if config.external_auth_avatar_url:
-                avatar_url = user_data.get(config.external_auth_avatar_url)
-            else:
-                avatar_url = user_data.get("picture", None)
-
+            username = _extract_oauth2_username(config, user_data)
+            full_name, avatar_url = _extract_oauth2_profile(config, user_data)
         except (BadRequestException, UnauthorizedException):
             raise
         except Exception as e:
             logger.error(f"OAuth2 callback error: {str(e)}")
             raise UnauthorizedException(message=str(e))
 
-    # Find or create user
-    user = await User.first_by_field(session=session, field="username", value=username)
+    user = await User.first_by_field(
+        session=session, field="username", value=username
+    )
     if not user:
         user_info = User(
             username=username,
             full_name=full_name,
             avatar_url=avatar_url,
             hashed_password="",
-            is_admin=False,
+            is_admin=True,
             is_active=not config.external_auth_default_inactive,
             source=AuthProviderEnum.OAuth2,
             require_password_change=False,
@@ -572,7 +575,7 @@ async def oidc_callback(request: Request, session: SessionDep):
             full_name=full_name,
             avatar_url=avatar_url,
             hashed_password="",
-            is_admin=False,
+            is_admin=True,
             is_active=not config.external_auth_default_inactive,
             source=AuthProviderEnum.OIDC,
             require_password_change=False,
@@ -707,13 +710,28 @@ async def get_auth_config(request: Request):
 
     auth_type = (config.external_auth_type or "Local").lower()
     if auth_type == "oidc":
-        req_dict = {"is_oidc": True, "is_saml": False, "is_oauth2": False}
+        req_dict = {
+            "is_oidc": True,
+            "is_saml": False,
+            "is_oauth2": False,
+            "auto_redirect_sso": config.auto_redirect_sso,
+        }
     elif auth_type == "saml":
-        req_dict = {"is_oidc": False, "is_saml": True, "is_oauth2": False}
+        req_dict = {
+            "is_oidc": False,
+            "is_saml": True,
+            "is_oauth2": False,
+            "auto_redirect_sso": config.auto_redirect_sso,
+        }
     elif auth_type == "oauth2":
         # Frontend only knows is_oidc/is_saml, so we signal is_oauth2
         # and also set is_oidc=True for frontend compatibility (SSO button)
-        req_dict = {"is_oidc": True, "is_saml": False, "is_oauth2": True}
+        req_dict = {
+            "is_oidc": True,
+            "is_saml": False,
+            "is_oauth2": True,
+            "auto_redirect_sso": config.auto_redirect_sso,
+        }
 
     initial_password_file = Path(config.data_dir) / "initial_admin_password"
     if initial_password_file.exists():

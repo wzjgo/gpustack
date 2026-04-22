@@ -417,6 +417,12 @@ def start_cmd_options(parser_server: argparse.ArgumentParser):
         help="Key in the OAuth 2.0 userinfo response to use as the username. If not set, falls back to --external-auth-name.",
         default=get_gpustack_env("OAUTH2_USERINFO_USERNAME_KEY"),
     )
+    server_group.add_argument(
+        "--auto-redirect-sso",
+        action=OptionalBoolAction,
+        help="Automatically redirect to SSO login page when SSO is configured, without showing the local login form.",
+        default=get_gpustack_env_bool("AUTO_REDIRECT_SSO"),
+    )
 
     # SAML settings
     server_group.add_argument(
@@ -781,6 +787,7 @@ def set_server_options(args, config_data: dict):
         "oauth2_redirect_uri",
         "oauth2_scope",
         "oauth2_userinfo_username_key",
+        "auto_redirect_sso",
         "saml_idp_server_url",
         "saml_idp_logout_url",
         "saml_idp_entity_id",
